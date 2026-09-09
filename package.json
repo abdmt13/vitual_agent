@@ -6,9 +6,13 @@
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "dev": "node --watch server.js"
+    "dev": "node --watch server.js",
+    "test:integration": "node --env-file=.env --test tests/database.integration.test.js"
   },
   "engines": {
     "node": ">=20"
+  },
+  "dependencies": {
+    "mysql2": "^3.24.4"
   }
 }
