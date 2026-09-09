@@ -4,9 +4,11 @@ MVP de un asistente conversacional: el cliente escribe libremente y recibe una r
 
 ## Configurar Gemini
 
-En `.env`, usa `AI_PROVIDER=gemini`, `GEMINI_API_KEY=tu_clave` y `GEMINI_MODEL=gemini-3.6-flash`. Reinicia con `npm start` después de cambiar la configuración. La clave se envía únicamente desde el servidor a Google. No uses `OPENAI_API_KEY` para una clave de Gemini.
+En `.env`, usa `AI_PROVIDER=gemini`, `GEMINI_API_KEY=tu_clave` y `GEMINI_MODEL=gemini-3.1-flash-lite`. Reinicia con `npm start` después de cambiar la configuración. La clave se envía únicamente desde el servidor a Google. No uses `OPENAI_API_KEY` para una clave de Gemini.
 
 Gemini recibe los últimos 20 mensajes de la sesión guardados en MySQL y las instrucciones de `BOT_INSTRUCTIONS`. Para volver a OpenAI, usa `AI_PROVIDER=openai` y una clave propia de OpenAI. Sin clave del proveedor seleccionado, se activa el modo demostración.
+
+Para atención al cliente se usa `GEMINI_THINKING_LEVEL=minimal` y un máximo de 768 tokens de salida. Puedes cambiar el esfuerzo de razonamiento en `.env` según el modelo. `GEMINI_TIMEOUT_MS` permite configurar la espera entre 1000 y 120000 milisegundos (45000 por defecto). La consola muestra el tiempo y estado de cada solicitud sin registrar claves ni mensajes. El navegador avisa después de 10 segundos y recupera el texto enviado si ocurre un error. La respuesta se muestra completa al terminar la generación.
 
 ## Requisitos de ejecución
 

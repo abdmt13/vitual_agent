@@ -38,6 +38,10 @@ form.addEventListener("submit", async (event) => {
   resizeInput();
   setWaiting(true);
   const typing = addTyping();
+  const slowNotice = setTimeout(() => {
+    notice.hidden = false;
+    notice.textContent = "La respuesta está tardando más de lo habitual. Seguimos esperando…";
+  }, 10000);
 
   try {
     const response = await fetch("/api/chat", {
@@ -56,7 +60,11 @@ form.addEventListener("submit", async (event) => {
   } catch (error) {
     typing.remove();
     addMessage(error.message, "assistant");
+    input.value = message;
+    resizeInput();
+    notice.hidden = true;
   } finally {
+    clearTimeout(slowNotice);
     setWaiting(false);
     input.focus();
   }

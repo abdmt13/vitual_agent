@@ -64,6 +64,7 @@ const server = createServer(async (request, response) => {
 
 server.listen(port, () => {
   console.log(`Chatbot disponible en http://localhost:${server.address().port}`);
+  console.log(`Proveedor: ${provider}; modelo: ${provider === "gemini" ? (process.env.GEMINI_MODEL || "gemini-3.1-flash-lite") : model}`);
   if (!apiKey) {
     console.log("Modo demostración activo: configura la clave del proveedor en .env para usar IA.");
   }
@@ -86,7 +87,7 @@ async function handleChat(request, response) {
     const history = await database.getMessages(sessionId);
     let reply;
     try {
-      reply = await generateGeminiReply({ apiKey, model: process.env.GEMINI_MODEL || "gemini-3.6-flash", instructions, history, message });
+      reply = await generateGeminiReply({ apiKey, model: process.env.GEMINI_MODEL || "gemini-3.1-flash-lite", instructions, history, message });
     } catch (error) { return sendJson(response, 502, { error: error.message }); }
     await database.saveTurn(sessionId, message, reply);
     return sendJson(response, 200, { reply, demo: false });
