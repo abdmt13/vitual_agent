@@ -1,21 +1,34 @@
 export async function generateGeminiReply({ apiKey, model, instructions, history = [], message }) {
+  const started = Date.now();
+  const timeoutMs = Number(process.env.GEMINI_TIMEOUT_MS || 45000);
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 120000) throw new Error("GEMINI_TIMEOUT_MS debe estar entre 1000 y 120000.");
   let response;
+  let data;
   try {
     response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
       method: "POST",
       headers: { "x-goog-api-key": apiKey, "Content-Type": "application/json" },
-      signal: AbortSignal.timeout(45000),
+      signal: AbortSignal.timeout(timeoutMs),
       body: JSON.stringify({
-        systemInstruction: { parts: [{ text: instructions }] },
+        systemInstruction: { parts: [{ text: `${instructions}\nResponde de forma breve y directa, salvo que el usuario solicite detalles.` }] },
         contents: [...history.slice(-20).map(item => ({ role: item.role === "assistant" ? "model" : "user", parts: [{ text: item.content }] })),
           { role: "user", parts: [{ text: message }] }],
-        generationConfig: { maxOutputTokens: 2048 }
+        generationConfig: {
+          maxOutputTokens: 768,
+          ...(model.startsWith("gemini-3") && model.includes("flash")
+            ? { thinkingConfig: { thinkingLevel: process.env.GEMINI_THINKING_LEVEL || "minimal" } } : {})
+        }
       })
     });
-  } catch {
-    throw new Error("No se pudo conectar con Gemini o se agotó el tiempo de espera. Intenta de nuevo.");
+    data = await response.json();
+  } catch (error) {
+    console.error("Gemini solicitud:", { elapsedMs: Date.now() - started, error: error.name, code: error.cause?.code });
+    if (error.name === "TimeoutError" || error.name === "AbortError") {
+      throw new Error(`Gemini no respondió en ${timeoutMs / 1000} segundos. Intenta enviar el mensaje de nuevo.`);
+    }
+    throw new Error("No se pudo completar la conexión con Gemini. Revisa tu conexión e intenta de nuevo.");
   }
-  const data = await response.json().catch(() => ({}));
+  console.log("Gemini solicitud:", { model, elapsedMs: Date.now() - started, status: response.status });
   if (!response.ok) {
     console.error("Gemini API:", { status: response.status, code: data.error?.status });
     if (response.status === 429) throw new Error("Gemini no tiene cuota disponible o alcanzó su límite de solicitudes. Revisa los límites de tu proyecto en Google AI Studio.");
