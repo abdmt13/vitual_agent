@@ -5,8 +5,28 @@ const messages = document.querySelector("#messages");
 const notice = document.querySelector("#notice");
 const newChatButton = document.querySelector("#new-chat");
 
-let sessionId = crypto.randomUUID();
+let sessionId = sessionStorage.getItem("chatbot-session") || crypto.randomUUID();
+sessionStorage.setItem("chatbot-session", sessionId);
 let waiting = false;
+
+async function restoreConversation() {
+  setWaiting(true);
+  try {
+    const response = await fetch(`/api/chat/${encodeURIComponent(sessionId)}`);
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "No se pudo recuperar la conversación.");
+    if (data.messages.length) {
+      messages.replaceChildren();
+      for (const message of data.messages) addMessage(message.content, message.role);
+    }
+  } catch (error) {
+    notice.hidden = false;
+    notice.textContent = error.message;
+  } finally {
+    setWaiting(false);
+  }
+}
+restoreConversation();
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -31,7 +51,7 @@ form.addEventListener("submit", async (event) => {
     addMessage(data.reply, "assistant");
     notice.hidden = !data.demo;
     notice.textContent = data.demo
-      ? "Modo demostración: agrega tu clave de OpenAI en el archivo .env para activar respuestas inteligentes."
+      ? "Modo demostración: configura la clave del proveedor de IA en .env para activar respuestas inteligentes."
       : "";
   } catch (error) {
     typing.remove();
@@ -51,9 +71,21 @@ input.addEventListener("keydown", (event) => {
 });
 
 newChatButton.addEventListener("click", async () => {
+  if (waiting) return;
   const oldSessionId = sessionId;
+  setWaiting(true);
+  try {
+    const response = await fetch(`/api/chat/${encodeURIComponent(oldSessionId)}`, { method: "DELETE" });
+    if (!response.ok) throw new Error("No se pudo reiniciar la conversación.");
+  } catch (error) {
+    notice.hidden = false;
+    notice.textContent = error.message;
+    return;
+  } finally {
+    setWaiting(false);
+  }
   sessionId = crypto.randomUUID();
-  await fetch(`/api/chat/${encodeURIComponent(oldSessionId)}`, { method: "DELETE" }).catch(() => {});
+  sessionStorage.setItem("chatbot-session", sessionId);
   messages.replaceChildren();
   addMessage("¡Hola! Empecemos de nuevo. ¿En qué puedo ayudarte?", "assistant");
   notice.hidden = true;
@@ -89,6 +121,7 @@ function setWaiting(value) {
   waiting = value;
   sendButton.disabled = value;
   input.disabled = value;
+  newChatButton.disabled = value;
 }
 
 function resizeInput() {

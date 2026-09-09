@@ -2,11 +2,23 @@ import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
+import { connectDatabase } from "./database.js";
+import { generateGeminiReply } from "./gemini.js";
 
 const root = fileURLToPath(new URL("./public", import.meta.url));
-const conversations = new Map();
 
 await loadEnv();
+const provider = process.env.AI_PROVIDER || "openai";
+if (!["openai", "gemini"].includes(provider)) throw new Error("AI_PROVIDER debe ser openai o gemini");
+const apiKey = provider === "gemini" ? process.env.GEMINI_API_KEY : process.env.OPENAI_API_KEY;
+let database;
+try {
+  database = await connectDatabase();
+  console.log("Base de datos conectada.");
+} catch (error) {
+  console.error(`No se pudo conectar a MySQL (${error.code || "error"}). Revisa DB_HOST, DB_PORT, DB_USER, DB_PASSWORD y DB_NAME en .env.`);
+  process.exit(1);
+}
 
 const port = Number(process.env.PORT || 3000);
 const model = process.env.OPENAI_MODEL || "gpt-5.4-mini";
@@ -28,8 +40,15 @@ const server = createServer(async (request, response) => {
 
     if (request.method === "DELETE" && request.url?.startsWith("/api/chat/")) {
       const sessionId = decodeURIComponent(request.url.slice("/api/chat/".length));
-      conversations.delete(sessionId);
+      if (!validSessionId(sessionId)) return sendJson(response, 400, { error: "Sesión inválida." });
+      await database.deleteConversation(sessionId);
       return sendJson(response, 200, { ok: true });
+    }
+
+    if (request.method === "GET" && request.url?.startsWith("/api/chat/")) {
+      const sessionId = decodeURIComponent(request.url.slice("/api/chat/".length));
+      if (!validSessionId(sessionId)) return sendJson(response, 400, { error: "Sesión inválida." });
+      return sendJson(response, 200, { messages: await database.getMessages(sessionId) });
     }
 
     if (request.method === "GET") {
@@ -44,9 +63,9 @@ const server = createServer(async (request, response) => {
 });
 
 server.listen(port, () => {
-  console.log(`Chatbot disponible en http://localhost:${port}`);
-  if (!process.env.OPENAI_API_KEY) {
-    console.log("Modo demostración activo: configura OPENAI_API_KEY en .env para usar IA.");
+  console.log(`Chatbot disponible en http://localhost:${server.address().port}`);
+  if (!apiKey) {
+    console.log("Modo demostración activo: configura la clave del proveedor en .env para usar IA.");
   }
 });
 
@@ -55,7 +74,7 @@ async function handleChat(request, response) {
   const message = String(body.message || "").trim();
   const sessionId = String(body.sessionId || "").trim();
 
-  if (!message || !sessionId) {
+  if (!message || !validSessionId(sessionId)) {
     return sendJson(response, 400, { error: "Faltan el mensaje o el identificador de sesión." });
   }
 
@@ -63,14 +82,25 @@ async function handleChat(request, response) {
     return sendJson(response, 400, { error: "El mensaje es demasiado largo." });
   }
 
-  if (!process.env.OPENAI_API_KEY) {
+  if (apiKey && provider === "gemini") {
+    const history = await database.getMessages(sessionId);
+    let reply;
+    try {
+      reply = await generateGeminiReply({ apiKey, model: process.env.GEMINI_MODEL || "gemini-3.6-flash", instructions, history, message });
+    } catch (error) { return sendJson(response, 502, { error: error.message }); }
+    await database.saveTurn(sessionId, message, reply);
+    return sendJson(response, 200, { reply, demo: false });
+  }
+  if (!apiKey) {
+    const reply = demoReply(message);
+    await database.saveTurn(sessionId, message, reply);
     return sendJson(response, 200, {
-      reply: demoReply(message),
+      reply,
       demo: true
     });
   }
 
-  const previousResponseId = conversations.get(sessionId);
+  const previousResponseId = await database.getPreviousResponseId(sessionId);
   const payload = {
     model,
     instructions,
@@ -91,14 +121,32 @@ async function handleChat(request, response) {
 
   const data = await apiResponse.json();
   if (!apiResponse.ok) {
-    console.error("OpenAI API:", data);
+    const code = data.error?.code;
+    console.error("OpenAI API:", { status: apiResponse.status, code, type: data.error?.type });
+    let error = "No pude generar la respuesta. Revisa la configuración de OpenAI en el servidor.";
+    if (code === "credit_balance_exhausted") {
+      error = "El saldo de créditos de la API de OpenAI está agotado. Recarga el saldo en la sección Billing de OpenAI Platform para continuar.";
+    } else if (data.error?.type === "insufficient_quota") {
+      error = "La API de OpenAI no tiene cuota disponible. Revisa el saldo y los límites de uso en OpenAI Platform.";
+    } else if (apiResponse.status === 401) {
+      error = "OpenAI rechazó la clave API. Revisa OPENAI_API_KEY en .env y reinicia el servidor.";
+    } else if (code === "model_not_found") {
+      error = "El modelo configurado no existe o tu proyecto no tiene acceso. Revisa OPENAI_MODEL en .env.";
+    } else if (apiResponse.status === 429) {
+      error = "Se alcanzó el límite temporal de solicitudes de OpenAI. Espera un momento e intenta de nuevo.";
+    }
     return sendJson(response, 502, {
-      error: "No pude generar la respuesta. Revisa la clave, el modelo y tu conexión."
+      error
     });
   }
 
-  conversations.set(sessionId, data.id);
-  sendJson(response, 200, { reply: extractOutputText(data), demo: false });
+  const reply = extractOutputText(data);
+  await database.saveTurn(sessionId, message, reply, data.id);
+  sendJson(response, 200, { reply, demo: false });
+}
+
+function validSessionId(value) {
+  return /^[a-zA-Z0-9_-]{1,100}$/.test(value);
 }
 
 async function serveStatic(url, response) {
@@ -144,7 +192,7 @@ function demoReply(message) {
   if (/pedido|envío|envio|entrega/.test(text)) {
     return "Con gusto revisamos tu pedido. En una versión conectada podría solicitar el número de pedido y consultar su estado.";
   }
-  return "Entendí tu mensaje. Ahora estoy en modo demostración; agrega tu OPENAI_API_KEY para generar respuestas inteligentes y contextuales.";
+  return "Entendí tu mensaje. Ahora estoy en modo demostración; configura la clave del proveedor de IA en .env para generar respuestas inteligentes y contextuales.";
 }
 
 function sendJson(response, status, body) {
