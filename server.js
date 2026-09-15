@@ -4,6 +4,8 @@ import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { connectDatabase } from "./database.js";
 import { generateGeminiReply } from "./gemini.js";
+import { catalogReply } from "./catalog.js";
+import { customerRules, customerContext, customerReply } from "./customer-policy.js";
 
 const root = fileURLToPath(new URL("./public", import.meta.url));
 
@@ -64,7 +66,7 @@ const server = createServer(async (request, response) => {
 
 server.listen(port, () => {
   console.log(`Chatbot disponible en http://localhost:${server.address().port}`);
-  console.log(`Proveedor: ${provider}; modelo: ${provider === "gemini" ? (process.env.GEMINI_MODEL || "gemini-3.1-flash-lite") : model}`);
+  console.log(`Proveedor: ${provider}; modelo: ${provider === "gemini" ? (process.env.GEMINI_MODEL || "gemini-3.5-flash-lite") : model}`);
   if (!apiKey) {
     console.log("Modo demostración activo: configura la clave del proveedor en .env para usar IA.");
   }
@@ -83,12 +85,30 @@ async function handleChat(request, response) {
     return sendJson(response, 400, { error: "El mensaje es demasiado largo." });
   }
 
+  let businessInstructions = instructions;
+  let internalCodes = [];
+  if (apiKey) {
+    const context = await database.getBusinessContext();
+    internalCodes = context.properties.map(p => p.codigo);
+    const directReply = catalogReply(message, context);
+    if (directReply) {
+      await database.saveTurn(sessionId, message, directReply);
+      return sendJson(response, 200, { reply: directReply, demo: false });
+    }
+    businessInstructions += `\n${customerRules}\nSi truncated es true, las opciones son parciales y no puedes descartar otras.
+CATALOGO_JSON: ${JSON.stringify(customerContext(context))}`;
+  }
+
   if (apiKey && provider === "gemini") {
-    const history = await database.getMessages(sessionId);
+    const history = await database.getMessages(sessionId, true);
     let reply;
     try {
-      reply = await generateGeminiReply({ apiKey, model: process.env.GEMINI_MODEL || "gemini-3.1-flash-lite", instructions, history, message });
-    } catch (error) { return sendJson(response, 502, { error: error.message }); }
+      reply = await generateGeminiReply({ apiKey, model: process.env.GEMINI_MODEL || "gemini-3.5-flash-lite", instructions: businessInstructions, history, message });
+    } catch (error) {
+      console.error("No se pudo generar la respuesta:", error.message);
+      return sendJson(response, 502, { error: "No pude responder en este momento. Por favor, intenta de nuevo en unos momentos." });
+    }
+    reply = customerReply(reply, internalCodes);
     await database.saveTurn(sessionId, message, reply);
     return sendJson(response, 200, { reply, demo: false });
   }
@@ -104,7 +124,7 @@ async function handleChat(request, response) {
   const previousResponseId = await database.getPreviousResponseId(sessionId);
   const payload = {
     model,
-    instructions,
+    instructions: businessInstructions,
     input: message,
     max_output_tokens: 500
   };
@@ -137,11 +157,11 @@ async function handleChat(request, response) {
       error = "Se alcanzó el límite temporal de solicitudes de OpenAI. Espera un momento e intenta de nuevo.";
     }
     return sendJson(response, 502, {
-      error
+      error: "No pude responder en este momento. Por favor, intenta de nuevo en unos momentos."
     });
   }
 
-  const reply = extractOutputText(data);
+  const reply = customerReply(extractOutputText(data), internalCodes);
   await database.saveTurn(sessionId, message, reply, data.id);
   sendJson(response, 200, { reply, demo: false });
 }
@@ -224,7 +244,7 @@ async function loadEnv() {
       if (separator < 1) continue;
       const key = trimmed.slice(0, separator).trim();
       const value = trimmed.slice(separator + 1).trim().replace(/^['"]|['"]$/g, "");
-      if (!process.env[key]) process.env[key] = value;
+      if (process.env[key] === undefined) process.env[key] = value;
     }
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
