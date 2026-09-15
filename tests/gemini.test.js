@@ -21,3 +21,18 @@ test("Gemini: petición breve, historial, errores y tiempo de lectura", async (t
   mock.mock.mockImplementation(async () => ({ok:true,status:200,json:async()=>{throw new DOMException("timeout", "TimeoutError");}}));
   await assert.rejects(generateGeminiReply(args), /no respondió/);
 });
+
+test("Gemini recupera un 503 con un único reintento y comparte el límite de tiempo", async (t) => {
+  const signals = [];
+  const mock = t.mock.method(globalThis, "fetch", async (url, options) => {
+    signals.push(options.signal);
+    if (signals.length === 1) return { ok: false, status: 503, json: async () => ({ error: { status: "UNAVAILABLE" } }) };
+    return { ok: true, status: 200, json: async () => ({ candidates: [{ content: { parts: [{ thought: true, text: "oculto" }, { text: "Disponible" }] } }] }) };
+  });
+  assert.equal(await generateGeminiReply({ apiKey: "test", model: "gemini-3.5-flash-lite", instructions: "Ayuda", message: "propiedades" }), "Disponible");
+  assert.equal(mock.mock.callCount(), 2);
+  assert.equal(signals[0], signals[1]);
+  mock.mock.mockImplementation(async () => ({ ok: false, status: 503, json: async () => ({}) }));
+  await assert.rejects(generateGeminiReply({ apiKey: "test", model: "gemini-3.5-flash-lite", instructions: "Ayuda", message: "hola" }), /temporalmente/);
+  assert.equal(mock.mock.callCount(), 4);
+});

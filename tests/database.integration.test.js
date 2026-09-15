@@ -9,10 +9,14 @@ test("MySQL: guardar, reconectar, consultar y borrar una sesión", async () => {
   const sessionId = randomUUID();
   let db = await connectDatabase();
   try {
+    const catalog = await db.getBusinessContext();
+    assert.ok(Array.isArray(catalog.properties));
+    assert.ok(Array.isArray(catalog.faqs));
     await db.saveTurn(sessionId, "Información: café ☕ ' ?", "Respuesta de prueba", "response-test");
     await db.close();
     db = await connectDatabase();
     assert.equal(await db.getPreviousResponseId(sessionId), "response-test");
+    assert.deepEqual(await db.getMessages(sessionId, true), await db.getMessages(sessionId));
     assert.deepEqual(await db.getMessages(sessionId), [
       { role: "user", content: "Información: café ☕ ' ?" },
       { role: "assistant", content: "Respuesta de prueba" }
@@ -32,7 +36,7 @@ test("HTTP: modo demo e historial después de reiniciar el servidor", async () =
   let base;
   async function start() {
     child = spawn(process.execPath, ["server.js"], {
-      env: { ...process.env, OPENAI_API_KEY: "", PORT: "0" },
+      env: { ...process.env, AI_PROVIDER: "gemini", GEMINI_API_KEY: "", OPENAI_API_KEY: "", PORT: "0" },
       stdio: ["ignore", "pipe", "pipe"]
     });
     await new Promise((resolve, reject) => {
