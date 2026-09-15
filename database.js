@@ -30,6 +30,17 @@ export async function connectDatabase() {
     throw error;
   }
   return {
+    async getBusinessContext() {
+      const [properties] = await pool.query(`SELECT p.codigo, p.nombre, p.tipo, p.precio,
+        p.recamaras, p.banos, p.construccion_m2, p.terreno_m2, p.descripcion,
+        d.nombre AS desarrollo, d.ciudad, d.estado, d.zona
+        FROM propiedades p LEFT JOIN desarrollos d ON d.id = p.desarrollo_id
+        WHERE p.disponibilidad = 'Disponible' AND (d.id IS NULL OR d.activo = 1)
+        ORDER BY p.precio, p.id LIMIT 51`);
+      const [faqs] = await pool.query(`SELECT pregunta, respuesta FROM preguntas_frecuentes
+        WHERE activo = 1 ORDER BY id LIMIT 30`);
+      return { properties: properties.slice(0, 50), truncated: properties.length > 50, faqs };
+    },
     async getPreviousResponseId(sessionId) {
       const [rows] = await pool.execute(
         "SELECT previous_response_id FROM chatbot_conversations WHERE session_id = ?", [sessionId]);
@@ -51,10 +62,10 @@ export async function connectDatabase() {
         connection.release();
       }
     },
-    async getMessages(sessionId) {
+    async getMessages(sessionId, recentOnly = false) {
       const [rows] = await pool.execute(
-        "SELECT role, content FROM chatbot_messages WHERE session_id = ? ORDER BY id", [sessionId]);
-      return rows;
+        `SELECT role, content FROM chatbot_messages WHERE session_id = ? ORDER BY id ${recentOnly ? "DESC LIMIT 20" : "ASC"}`, [sessionId]);
+      return recentOnly ? rows.reverse() : rows;
     },
     async deleteConversation(sessionId) {
       await pool.execute("DELETE FROM chatbot_conversations WHERE session_id = ?", [sessionId]);
