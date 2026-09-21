@@ -14,11 +14,12 @@ from src.application.queries.chat_queries import GetConversationHistoryQuery, Ge
 def test_settings():
     return Settings(
         DATABASE_URL="sqlite+aiosqlite:///:memory:",
-        JWT_SECRET_KEY="test-secret-key",
+        JWT_SECRET_KEY="test-secret-key-that-is-at-least-32-bytes-long",
         REDIS_ENABLED=False,
         KAFKA_ENABLED=False,
         AI_PROVIDER="mock"
     )
+
 
 
 @pytest_asyncio.fixture

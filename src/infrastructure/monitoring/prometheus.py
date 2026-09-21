@@ -1,3 +1,4 @@
+from typing import Optional
 from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
 from starlette.requests import Request
 from starlette.responses import Response
@@ -28,7 +29,8 @@ MEDIATOR_DISPATCH_COUNT = Counter(
 )
 
 
-def metrics_endpoint(request: Request = None) -> Response:
+def metrics_endpoint(request: Optional[Request] = None) -> Response:
     """Endpoint para exponer métricas en formato Prometheus."""
     data = generate_latest()
     return Response(content=data, media_type=CONTENT_TYPE_LATEST)
+
